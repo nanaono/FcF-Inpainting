@@ -259,7 +259,7 @@ class ImageDataset(Dataset):
         fname = self.img_files[idx]
         mask_fname = self.mask_files[idx]
 
-        if fname != mask_fname:
+        if os.path.basename(fname) != os.path.basename(mask_fname):
             raise ValueError("Image and mask file names do not match")
 
         rgb = np.array(self._load_image(fname))
@@ -271,7 +271,7 @@ class ImageDataset(Dataset):
         rgb = np.rint(rgb * 255).clip(0, 255).astype(np.uint8)
 
         # make mask to (0, 1)
-        mask = np.where(mask > 0.5, 1, 0)
+        mask = np.where(mask > 0.5, 1.0, 0.0)
 
         # make mask to (1, H, W)
         mask = mask[np.newaxis, :, :]
@@ -279,7 +279,7 @@ class ImageDataset(Dataset):
         return rgb, mask
         
     def __getitem__(self, idx):
-        rgb, mask = self._get_image(idx) # modal, uint8 {0, 1}
+        rgb, mask = self._get_image_with_mask(idx) # modal, uint8 {0, 1}
         rgb = rgb.transpose(2,0,1)
 
         return rgb, mask, super().get_label(idx)
