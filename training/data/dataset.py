@@ -1,4 +1,4 @@
-﻿import os
+﻿﻿import os
 import numpy as np
 import PIL.Image
 import json
@@ -156,29 +156,36 @@ class ImageDataset(Dataset):
     def __init__(self,
         img_path,                   # Path to images.
         mask_path,
+        synth_path,
         resolution      = None,     # Ensure specific resolution, None = highest available.
         **super_kwargs,             # Additional arguments for the Dataset base class.
     ):
         self.sz = resolution
         self.img_path = img_path
         self.mask_path = mask_path
+        self.synth_path = synth_path
         self._type = 'dir'
 
         self._all_fnames = [os.path.relpath(os.path.join(root, fname), start=self.img_path) for root, _dirs, files in os.walk(self.img_path) for fname in files]
         self._all_mask_fnames = [os.path.relpath(os.path.join(root, fname), start=self.mask_path) for root, _dirs, files in os.walk(self.mask_path) for fname in files]
+        self._all_synthesis_fnames = [os.path.relpath(os.path.join(root, fname), start=self.synth_path) for root, _dirs, files in os.walk(self.synth_path) for fname in files]
 
         PIL.Image.init()
 
         self._image_fnames = sorted(os.path.join(self.img_path,fname) for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
         self._mask_fnames = sorted(os.path.join(self.mask_path, fname) for fname in self._all_mask_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
+        self._synthesis_fnames = sorted(os.path.join(self.synth_path, fname) for fname in self._all_synthesis_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
 
         if len(self._image_fnames) == 0:
             raise IOError('No image files found in the specified path')
         if len(self._mask_fnames) == 0:
             raise IOError("No mask files found in the specified path")
+        if len(self._synthesis_fnames) == 0:
+            raise IOError("No synthesis files found in the specified path")
         
         self.img_files = []
         self.mask_files = []
+        self.synthesis_files = []
         
         for f in self._image_fnames:
             if not '_mask' in f:
@@ -187,7 +194,12 @@ class ImageDataset(Dataset):
         for f in self._mask_fnames:
             self.mask_files.append(f)
         
+        for f in self._synthesis_fnames:
+            self.synthesis_files.append(f)
+
         self.img_files = sorted(self.img_files)
+        self.mask_files = sorted(self.mask_files)
+        self.synthesis_files = sorted(self.synthesis_files)
 
         self.transform = A.Compose([
             A.PadIfNeeded(min_height=self.sz, min_width=self.sz),
@@ -258,17 +270,22 @@ class ImageDataset(Dataset):
     def _get_image_with_mask(self, idx):
         fname = self.img_files[idx]
         mask_fname = self.mask_files[idx]
+        sysnthesis_fname = self.synthesis_files[idx]
 
-        if os.path.basename(fname) != os.path.basename(mask_fname):
+        if ((os.path.basename(fname) != os.path.basename(mask_fname))
+            or (os.path.basename(fname) != os.path.basename(sysnthesis_fname))):
             raise ValueError("Image and mask file names do not match")
 
         rgb = np.array(self._load_image(fname))
+        synth = np.array(self._load_image(sysnthesis_fname))
         mask = np.array(self._load_mask_image(mask_fname))
 
         rgb = self.transform(image=rgb)['image']
+        synth = self.transform(image=synth)['image']
         mask = self.mask_transform(image=mask)['image']
 
         rgb = np.rint(rgb * 255).clip(0, 255).astype(np.uint8)
+        synth = np.rint(synth * 255).clip(0, 255).astype(np.uint8)
 
         # make mask to (0, 1)
         mask = np.where(mask > 0.5, 1.0, 0.0)
@@ -276,10 +293,11 @@ class ImageDataset(Dataset):
         # make mask to (1, H, W)
         mask = mask[np.newaxis, :, :]
 
-        return rgb, mask
+        return synth, rgb, mask
         
     def __getitem__(self, idx):
-        rgb, mask = self._get_image_with_mask(idx) # modal, uint8 {0, 1}
+        synth, rgb, mask = self._get_image_with_mask(idx) # modal, uint8 {0, 1}
         rgb = rgb.transpose(2,0,1)
+        synth = synth.transpose(2,0,1)
 
-        return rgb, mask, super().get_label(idx)
+        return synth, rgb, mask, super().get_label(idx)

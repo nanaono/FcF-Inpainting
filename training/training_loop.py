@@ -66,8 +66,8 @@ def setup_snapshot_image_grid(training_set, random_seed=0):
             label_groups[label] = [indices[(i + gw) % len(indices)] for i in range(len(indices))]
 
     # Load data.
-    images, masks, labels = zip(*[training_set[i] for i in grid_indices])
-    return (gw, gh), np.stack(images), np.stack(masks), np.stack(labels)
+    synths, images, masks, labels = zip(*[training_set[i] for i in grid_indices])
+    return (gw, gh), np.stack(synths), np.stack(images), np.stack(masks), np.stack(labels)
 
 #----------------------------------------------------------------------------
 
@@ -250,11 +250,12 @@ def training_loop(
     grid_c = None
     if rank == 0:
         print('Exporting sample images...')
-        grid_size, images, masks, labels = setup_snapshot_image_grid(training_set=training_set)
-        erased_images = images * (1 - masks)
+        grid_size, synths, images, masks, labels = setup_snapshot_image_grid(training_set=training_set)
+        erased_images = synths * (1 - masks)
         grid_img = (torch.from_numpy(images).to(torch.float32) / 127.5 - 1).to(device)
+        grid_synth = (torch.from_numpy(synths).to(torch.float32) / 127.5 - 1).to(device)
         grid_mask = torch.from_numpy(masks).to(torch.float32).to(device)
-        grid_erased_img = grid_img * (1 - grid_mask)
+        grid_erased_img = grid_synth * (1 - grid_mask)
         grid_img = grid_img.split(batch_gpu)
         grid_mask = grid_mask.split(batch_gpu)
         grid_erased_img = grid_erased_img.split(batch_gpu)
@@ -296,11 +297,12 @@ def training_loop(
     while True:
         # Fetch training data.
         with torch.autograd.profiler.record_function('data_fetch'):
-            phase_real_imgs, phase_masks, phase_real_cs = next(training_set_iterator)
+            phase_synth_imgs, phase_real_imgs, phase_masks, phase_real_cs = next(training_set_iterator)
             # phase_erased_img = ((phase_real_imgs * (1 - phase_masks)).to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
             phase_real_img = (phase_real_imgs.to(device).to(torch.float32) / 127.5 - 1)
+            phase_synth_img = (phase_synth_imgs.to(device).to(torch.float32) / 127.5 - 1)
             phase_inv_mask = (phase_masks.to(device).to(torch.float32))
-            phase_erased_img = phase_real_img * (1 - phase_inv_mask)
+            phase_erased_img = phase_synth_img * (1 - phase_inv_mask)
             phase_erased_img = phase_erased_img.split(batch_gpu)
             phase_real_img = phase_real_img.split(batch_gpu)
             phase_inv_mask = phase_inv_mask.split(batch_gpu)
