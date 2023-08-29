@@ -1,4 +1,4 @@
-﻿﻿# Modified from https://github.com/NVlabs/stylegan2-ada-pytorch
+﻿# Modified from https://github.com/NVlabs/stylegan2-ada-pytorch
 
 import numpy as np
 import torch
