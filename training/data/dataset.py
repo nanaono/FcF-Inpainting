@@ -155,55 +155,75 @@ class ImageDataset(Dataset):
     
     def __init__(self,
         img_path,                   # Path to images.
+        mask_path,
         resolution      = None,     # Ensure specific resolution, None = highest available.
         **super_kwargs,             # Additional arguments for the Dataset base class.
     ):
         self.sz = resolution
         self.img_path = img_path
+        self.mask_path = mask_path
         self._type = 'dir'
-        self.files = []
 
         self._all_fnames = [os.path.relpath(os.path.join(root, fname), start=self.img_path) for root, _dirs, files in os.walk(self.img_path) for fname in files]
+        self._all_mask_fnames = [os.path.relpath(os.path.join(root, fname), start=self.mask_path) for root, _dirs, files in os.walk(self.mask_path) for fname in files]
+
         PIL.Image.init()
+
         self._image_fnames = sorted(os.path.join(self.img_path,fname) for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
+        self._mask_fnames = sorted(os.path.join(self.mask_path, fname) for fname in self._all_mask_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
+
         if len(self._image_fnames) == 0:
             raise IOError('No image files found in the specified path')
+        if len(self._mask_fnames) == 0:
+            raise IOError("No mask files found in the specified path")
         
-        self.files = []
+        self.img_files = []
+        self.mask_files = []
         
         for f in self._image_fnames:
             if not '_mask' in f:
-                self.files.append(f)
+                self.img_files.append(f)
+
+        for f in self._mask_fnames:
+            self.mask_files.append(f)
         
-        self.files = sorted(self.files)
+        self.img_files = sorted(self.img_files)
 
         self.transform = A.Compose([
-        A.PadIfNeeded(min_height=self.sz, min_width=self.sz),
-        A.OpticalDistortion(),
-        A.RandomCrop(height=self.sz, width=self.sz),
-        A.HorizontalFlip(),
-        A.CLAHE(),
-        A.ToFloat()
-    ])
+            A.PadIfNeeded(min_height=self.sz, min_width=self.sz),
+            # A.OpticalDistortion(),
+            # A.RandomCrop(height=self.sz, width=self.sz),
+            # A.HorizontalFlip(),
+            # A.CLAHE(),
+            A.ToFloat()
+        ])
+
+        self.mask_transform = A.Compose([
+            A.PadIfNeeded(min_height=self.sz, min_width=self.sz),
+            A.ToFloat()
+        ])
 
         name = os.path.splitext(os.path.basename(self.img_path))[0]
-        raw_shape = [len(self.files)] + list(self._load_raw_image(0).shape)
+        raw_shape = [len(self.img_files)] + list(self._load_raw_image(0).shape)
         if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
             raise IOError('Image files do not match the specified resolution')
         super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
 
     def __len__(self):
-        return len(self.files)
+        return len(self.img_files)
 
     def _load_image(self, fn):
         return PIL.Image.open(fn).convert('RGB')
+    
+    def _load_mask_image(self, fn):
+        return PIL.Image.open(fn).convert('L')
     
     @staticmethod
     def _file_ext(fname):
         return os.path.splitext(fname)[1].lower()
 
     def _load_raw_image(self, raw_idx):
-        fname = self.files[raw_idx]
+        fname = self.img_files[raw_idx]
         image = np.array(PIL.Image.open(fname).convert('RGB'))
         image = self.transform(image=image)['image']
         if image.ndim == 2:
@@ -226,13 +246,36 @@ class ImageDataset(Dataset):
         return labels
 
     def _get_image(self, idx):
-        fname = self.files[idx]
+        fname = self.img_files[idx]
         mask = mask_generator.generate_random_mask(s=self.sz, hole_range=[0.1,0.7])
 
         rgb = np.array(self._load_image(fname)) # uint8
         rgb = self.transform(image=rgb)['image']
         rgb = np.rint(rgb * 255).clip(0, 255).astype(np.uint8)
         
+        return rgb, mask
+
+    def _get_image_with_mask(self, idx):
+        fname = self.img_files[idx]
+        mask_fname = self.mask_files[idx]
+
+        if fname != mask_fname:
+            raise ValueError("Image and mask file names do not match")
+
+        rgb = np.array(self._load_image(fname))
+        mask = np.array(self._load_mask_image(mask_fname))
+
+        rgb = self.transform(image=rgb)['image']
+        mask = self.mask_transform(image=mask)['image']
+
+        rgb = np.rint(rgb * 255).clip(0, 255).astype(np.uint8)
+
+        # make mask to (0, 1)
+        mask = np.where(mask > 0.5, 1, 0)
+
+        # make mask to (1, H, W)
+        mask = mask[np.newaxis, :, :]
+
         return rgb, mask
         
     def __getitem__(self, idx):

@@ -44,6 +44,7 @@ def setup_training_loop_kwargs(
 
     # Dataset.
     img_data        = None, # Training dataset (required): <path>
+    mask_data       = None,
     eval_img_data   = None, # Evaluation dataset (required): <path>
     resolution      = None, # Res of Images
     cond            = None, # Train conditional model based on dataset labels: <bool>, default = False
@@ -111,7 +112,7 @@ def setup_training_loop_kwargs(
         resolution = 256
     assert img_data is not None
     assert isinstance(img_data, str)
-    args.training_set_kwargs = dnnlib.EasyDict(class_name='training.data.dataset.ImageDataset', img_path=img_data, use_labels=True, max_size=None, xflip=False)
+    args.training_set_kwargs = dnnlib.EasyDict(class_name='training.data.dataset.ImageDataset', mask_path=mask_data, img_path=img_data, use_labels=True, max_size=None, xflip=False)
     args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
     args.training_set_kwargs.resolution = resolution
     try:
@@ -416,6 +417,7 @@ class CommaSeparatedList(click.ParamType):
 
 # Dataset.
 @click.option('--img_data', help='Training images (directory)', metavar='PATH', required=True)
+@click.option('--mask_data', help='Training mask images (directory)', metavar='PATH', required=True)
 @click.option('--eval_img_data', help='Evaluation images (directory)', metavar='PATH', required=True)
 @click.option('--resolution', help='Res of Images [default: 256]', type=int, metavar='INT')
 @click.option('--cond', help='Train conditional model based on dataset labels [default: false]', type=bool, metavar='BOOL')
@@ -485,6 +487,7 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     print()
     print(Fore.GREEN + f'Output directory:   {args.run_dir}')
     print(Fore.GREEN + f'Training data:      {args.training_set_kwargs.img_path}')
+    print(Fore.GREEN + f'Training mask data: {args.training_set_kwargs.mask_path}')
     print(Fore.GREEN + f'Training duration:  {args.total_kimg} kimg')
     print(Fore.GREEN + f'Number of GPUs:     {args.num_gpus}')
     print(Fore.GREEN + f'Number of images:   {args.training_set_kwargs.max_size}')
