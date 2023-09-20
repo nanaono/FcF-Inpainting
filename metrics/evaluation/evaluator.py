@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import tqdm
+import tqdm.auto
 from torch.utils.data import DataLoader
 
 from metrics.evaluation.utils import move_to_device

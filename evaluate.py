@@ -53,7 +53,7 @@ def visualize_gen(i, msk_type, comp_img):
     comp_img = np.asarray(comp_img[0].cpu(), dtype=np.float32).transpose(1, 2, 0)
     comp_img = (comp_img - lo) * (255 / (hi - lo))
     comp_img = np.rint(comp_img).clip(0, 255).astype(np.uint8)
-    plt.imsave(f'fid_gens/{msk_type}/' + i + '000.png', comp_img / 255)
+    plt.imsave(f'fid_gens/{msk_type}/' + i + '.png', comp_img / 255)
     plt.close()
 
 
@@ -62,9 +62,9 @@ def create_folders(msk_type):
         os.makedirs(f'fid_gens/{msk_type}')
 
 
-def save_gen(G, rank, num_gpus, device, img_data, resolution, label, truncation_psi, msk_type):
+def save_gen(G, rank, num_gpus, device, img_data, synth_data, mask_data, resolution, label, truncation_psi, msk_type):
     G = copy.deepcopy(G).eval().requires_grad_(False).to(device)
-    dataset = ImageDataset(img_data, resolution)
+    dataset = ImageDataset(img_data, synth_data, mask_data, resolution)
     num_items = len(dataset)
 
     data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)

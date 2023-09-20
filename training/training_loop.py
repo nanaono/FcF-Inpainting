@@ -113,6 +113,8 @@ def save_image_grid(img, erased_img, inv_mask, pred_img, fname, drange, grid_siz
 def training_loop(
     run_dir                 = '.',      # Output directory.
     eval_img_data           = None,     # Evaluation Image data
+    eval_synth_data         = None,
+    eval_mask_data          = None,
     resolution              = 256,      # Resolution of evaluation image
     training_set_kwargs     = {},       # Options for training set.
     data_loader_kwargs      = {},       # Options for torch.utils.data.DataLoader.
@@ -251,17 +253,17 @@ def training_loop(
     if rank == 0:
         print('Exporting sample images...')
         grid_size, synths, images, masks, labels = setup_snapshot_image_grid(training_set=training_set)
-        erased_images = synths * (1 - masks)
+        synth_images = synths # * (1 - masks)
         grid_img = (torch.from_numpy(images).to(torch.float32) / 127.5 - 1).to(device)
         grid_synth = (torch.from_numpy(synths).to(torch.float32) / 127.5 - 1).to(device)
         grid_mask = torch.from_numpy(masks).to(torch.float32).to(device)
-        grid_erased_img = grid_synth * (1 - grid_mask)
+        grid_synth_img = grid_synth # * (1 - grid_mask)
         grid_img = grid_img.split(batch_gpu)
         grid_mask = grid_mask.split(batch_gpu)
-        grid_erased_img = grid_erased_img.split(batch_gpu)
+        grid_synth_img = grid_synth_img.split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(torch.float32).to(device).split(batch_gpu)
-        pred_images = torch.cat([G_ema(img=torch.cat([0.5 - mask, erased_img], dim=1), c=c, noise_mode='const').cpu() for erased_img, mask, c in zip(grid_erased_img, grid_mask, grid_c)])
-        save_image_grid(images, erased_images, masks, pred_images.detach().numpy(), os.path.join(run_dir, 'run_init'), drange=[-1,1], grid_size=grid_size)
+        pred_images = torch.cat([G_ema(img=torch.cat([0.5 - mask, erased_img], dim=1), c=c, noise_mode='const').cpu() for erased_img, mask, c in zip(grid_synth_img, grid_mask, grid_c)])
+        save_image_grid(images, synth_images, masks, pred_images.detach().numpy(), os.path.join(run_dir, 'run_init'), drange=[-1,1], grid_size=grid_size)
    
     # Initialize logs.
     if rank == 0:
@@ -302,8 +304,8 @@ def training_loop(
             phase_real_img = (phase_real_imgs.to(device).to(torch.float32) / 127.5 - 1)
             phase_synth_img = (phase_synth_imgs.to(device).to(torch.float32) / 127.5 - 1)
             phase_inv_mask = (phase_masks.to(device).to(torch.float32))
-            phase_erased_img = phase_synth_img * (1 - phase_inv_mask)
-            phase_erased_img = phase_erased_img.split(batch_gpu)
+            phase_input_img = phase_synth_img # (1 - phase_inv_mask) + 0.1, min=0.0, max=1.0)
+            phase_input_img = phase_input_img.split(batch_gpu)
             phase_real_img = phase_real_img.split(batch_gpu)
             phase_inv_mask = phase_inv_mask.split(batch_gpu)
             phase_real_c = phase_real_cs.to(device).split(batch_gpu)
@@ -312,7 +314,7 @@ def training_loop(
             all_gen_c = [phase_gen_c.split(batch_gpu) for phase_gen_c in all_gen_c.split(batch_size)]
 
         # Execute training phases.
-        for phase, phase_gen_c in zip(phases, all_gen_c):
+        for i, (phase, phase_gen_c) in enumerate(zip(phases, all_gen_c)):
             if batch_idx % phase.interval != 0:
                 continue
 
@@ -323,10 +325,10 @@ def training_loop(
             phase.module.requires_grad_(True)
 
             # Accumulate gradients over multiple rounds.
-            for round_idx, (erased_img, real_img, mask, real_c, gen_c) in enumerate(zip(phase_erased_img, phase_real_img, phase_inv_mask, phase_real_c, phase_gen_c)):
+            for round_idx, (input_img, real_img, mask, real_c, gen_c) in enumerate(zip(phase_input_img, phase_real_img, phase_inv_mask, phase_real_c, phase_gen_c)):
                 sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)
                 gain = phase.interval
-                loss.accumulate_gradients(phase=phase.name, erased_img=erased_img, real_img=real_img, mask=mask, real_c=real_c, gen_c=gen_c, sync=sync, gain=gain)
+                loss.accumulate_gradients(phase=phase.name, erased_img=input_img, real_img=real_img, mask=mask, real_c=real_c, gen_c=gen_c, sync=sync, gain=gain)
 
             # Update weights.
             phase.module.requires_grad_(False)
@@ -365,7 +367,7 @@ def training_loop(
 
         # Perform maintenance tasks once per tick.
         done = (cur_nimg >= total_kimg * 1000)
-        if (not done) and (cur_tick != 0) and (cur_nimg < tick_start_nimg + kimg_per_tick * 1000):
+        if (not done) and (cur_tick != 0) and (cur_nimg < tick_start_nimg + kimg_per_tick * 30):
             continue
 
         # Print status line, accumulating the same information in stats_collector.
@@ -396,6 +398,7 @@ def training_loop(
         # Save network snapshot.
         snapshot_pkl = None
         snapshot_data = None
+        print(f"cur_tick: {cur_tick}, network_snapshot_ticks: {network_snapshot_ticks}")
         if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0) and cur_tick is not 0:
             snapshot_data = dict(training_set_kwargs=dict(training_set_kwargs))
             for name, module in [('G', G), ('D', D), ('G_ema', G_ema), ('augment_pipe', augment_pipe)]:
@@ -416,8 +419,9 @@ def training_loop(
             if rank == 0:
                 create_folders(msk_type)
             label = torch.zeros([1, snapshot_data['G_ema'].c_dim]).to(device)
-            save_gen(snapshot_data['G_ema'], rank, num_gpus, device, eval_img_data, resolution, label, 1, msk_type)
+            save_gen(snapshot_data['G_ema'], rank, num_gpus, device, eval_img_data, eval_synth_data, eval_mask_data, resolution, label, 1, msk_type)
             if rank == 0:
+                print(Fore.GREEN + Style.BRIGHT + f' Evaluating FID Score for {msk_type}...')
                 eval_dataset = PrecomputedInpaintingResultsDataset(eval_img_data, f'fid_gens/{msk_type}', **eval_config.dataset_kwargs)
                 metrics = {
                     'fid': FIDScore()
@@ -434,8 +438,8 @@ def training_loop(
 
         # Save image snapshot.
         if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
-            pred_images = torch.cat([G_ema(img=torch.cat([0.5 - mask, erased_img], dim=1), c=c, noise_mode='const').cpu() for erased_img, mask, c in zip(grid_erased_img, grid_mask, grid_c)])
-            save_image_grid(images, erased_images, masks, pred_images.detach().numpy(), os.path.join(run_dir, f'run_{cur_nimg//1000:06d}'), drange=[-1,1], grid_size=grid_size)
+            pred_images = torch.cat([G_ema(img=torch.cat([0.5 - mask, erased_img], dim=1), c=c, noise_mode='const').cpu() for erased_img, mask, c in zip(grid_synth_img, grid_mask, grid_c)])
+            save_image_grid(images, synth_images, masks, pred_images.detach().numpy(), os.path.join(run_dir, f'run_{cur_nimg//1000:06d}'), drange=[-1,1], grid_size=grid_size)
 
         # Collect statistics.
         for phase in phases:

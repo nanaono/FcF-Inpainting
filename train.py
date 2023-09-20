@@ -47,6 +47,8 @@ def setup_training_loop_kwargs(
     mask_data       = None,
     synth_data      = None,
     eval_img_data   = None, # Evaluation dataset (required): <path>
+    eval_synth_data = None,
+    eval_mask_data  = None,
     resolution      = None, # Res of Images
     cond            = None, # Train conditional model based on dataset labels: <bool>, default = False
     subset          = None, # Train with only N images: <int>, default = all
@@ -88,10 +90,12 @@ def setup_training_loop_kwargs(
         raise UserError('--gpus must be a power of two')
     args.num_gpus = gpus
     args.eval_img_data = eval_img_data
+    args.eval_synth_data = eval_synth_data
+    args.eval_mask_data = eval_mask_data
     args.resolution = resolution
 
     if snap is None:
-        snap = 50
+        snap = 10
     assert isinstance(snap, int)
     if snap < 1:
         raise UserError('--snap must be at least 1')
@@ -422,6 +426,8 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--mask_data', help='Training mask images (directory)', metavar='PATH', required=True)
 @click.option('--synth_data', help='Training synthetic images (directory)', metavar='PATH', required=True)
 @click.option('--eval_img_data', help='Evaluation images (directory)', metavar='PATH', required=True)
+@click.option('--eval_synth_data', help='Evaluation synthetic images (directory)', metavar='PATH', required=True)
+@click.option('--eval_mask_data', help='Evaluation mask images (directory)', metavar='PATH', required=True)
 @click.option('--resolution', help='Res of Images [default: 256]', type=int, metavar='INT')
 @click.option('--cond', help='Train conditional model based on dataset labels [default: false]', type=bool, metavar='BOOL')
 @click.option('--subset', help='Train with only N images [default: all]', type=int, metavar='INT')
